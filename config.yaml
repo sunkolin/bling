@@ -1,4 +1,4 @@
 app:
-  name: game-modifier
+  name: bling
   description: "游戏修改器 - 可以查询和修改游戏中的数值"
   version: "1.0.0"
