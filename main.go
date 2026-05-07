@@ -265,8 +265,45 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 	return addresses, nil
 }
 
+// refineSearch 在上次搜索结果中再次搜索指定值
+func refineSearch(targetValue int32) ([]uintptr, error) {
+	if len(lastSearchAddresses) == 0 {
+		return nil, fmt.Errorf("没有上次的搜索结果，请先进行首次搜索")
+	}
+
+	var addresses []uintptr
+	fmt.Printf("在上次 %d 个结果中再次搜索值: %d...\n", len(lastSearchAddresses), targetValue)
+	startTime := time.Now()
+
+	// 遍历上次搜索的所有地址，检查当前值是否匹配
+	for _, addr := range lastSearchAddresses {
+		buffer := make([]byte, 4)
+		err := modifier.ReadMemory(addr, buffer)
+
+		if err == nil {
+			// 将4个字节转换为int32（小端序）
+			value := int32(buffer[0]) |
+				int32(buffer[1])<<8 |
+				int32(buffer[2])<<16 |
+				int32(buffer[3])<<24
+
+			if value == targetValue {
+				addresses = append(addresses, addr)
+			}
+		}
+	}
+
+	elapsed := time.Since(startTime)
+	fmt.Printf("再次搜索完成！找到 %d 个匹配地址，耗时: %v\n", len(addresses), elapsed)
+
+	return addresses, nil
+}
+
 // 全局游戏修改器实例
 var modifier = NewGameModifier()
+
+// 存储上次搜索的地址列表，用于再次搜索
+var lastSearchAddresses []uintptr
 
 // API响应结构
 type APIResponse struct {
@@ -318,7 +355,8 @@ func searchValueHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Value int32 `json:"value"`
+		Value        int32 `json:"value"`
+		RefineSearch bool  `json:"refine_search,omitempty"` // 是否在上次结果中再次搜索
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -326,11 +364,28 @@ func searchValueHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	addresses, err := modifier.ScanForValue(req.Value)
+	var addresses []uintptr
+	var err error
+
+	if req.RefineSearch && len(lastSearchAddresses) > 0 {
+		// 在上次搜索结果中再次搜索
+		addresses, err = refineSearch(req.Value)
+	} else {
+		// 全新搜索
+		addresses, err = modifier.ScanForValue(req.Value)
+		if err == nil {
+			// 保存搜索结果供下次使用
+			lastSearchAddresses = addresses
+		}
+	}
+
 	if err != nil {
 		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: err.Error()})
 		return
 	}
+
+	// 更新上次搜索结果
+	lastSearchAddresses = addresses
 
 	json.NewEncoder(w).Encode(APIResponse{
 		Success: true,
@@ -522,8 +577,12 @@ const htmlPage = `
             <h2>2. 搜索数值</h2>
             <div class="input-group">
                 <input type="number" id="searchValue" placeholder="输入要搜索的值">
-                <button onclick="searchValue()">搜索值</button>
+                <button onclick="searchValue()">首次搜索</button>
+                <button onclick="refineSearch()" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">再次搜索</button>
             </div>
+            <p style="font-size: 12px; color: #666; margin-top: 8px;">
+                💡 提示：首次搜索会得到很多结果，改变游戏数值后点击“再次搜索”来缩小范围
+            </p>
         </div>
 
         <div class="section">
@@ -590,7 +649,7 @@ const htmlPage = `
                 const response = await fetch('/api/search-value', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({value: parseInt(value)})
+                    body: JSON.stringify({value: parseInt(value), refine_search: false})
                 });
                 const data = await response.json();
                 showResult(data.message, data.success ? 'success' : 'error');
@@ -598,6 +657,38 @@ const htmlPage = `
                 // 显示地址列表
                 if (data.success && data.data && data.data.addresses && data.data.addresses.length > 0) {
                     displayAddresses(data.data.addresses);
+                } else if (data.success && data.data.addresses.length === 0) {
+                    showResult('未找到匹配的地址，请尝试其他数值', 'warning');
+                }
+            } catch (error) {
+                showResult('错误: ' + error.message, 'error');
+            }
+        }
+
+        async function refineSearch() {
+            const value = document.getElementById('searchValue').value;
+            if (!value) {
+                showResult('错误: 请输入要搜索的值', 'error');
+                return;
+            }
+
+            showResult('正在上次结果中再次搜索...', 'success');
+            document.getElementById('addressList').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/search-value', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({value: parseInt(value), refine_search: true})
+                });
+                const data = await response.json();
+                showResult(data.message, data.success ? 'success' : 'error');
+                
+                // 显示地址列表
+                if (data.success && data.data && data.data.addresses && data.data.addresses.length > 0) {
+                    displayAddresses(data.data.addresses);
+                } else if (data.success && data.data.addresses.length === 0) {
+                    showResult('未找到匹配的地址，可能目标地址已变化', 'warning');
                 }
             } catch (error) {
                 showResult('错误: ' + error.message, 'error');
