@@ -1,0 +1,4 @@
+app:
+  name: sun
+  description: "sun-cli"
+  version: "1.0.0"
