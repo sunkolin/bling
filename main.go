@@ -11,15 +11,15 @@ import (
 
 // 定义Windows API函数
 var (
-	kernel32 = syscall.NewLazyDLL("kernel32.dll")
-	procOpenProcess = kernel32.NewProc("OpenProcess")
-	procReadProcessMemory = kernel32.NewProc("ReadProcessMemory")
-	procWriteProcessMemory = kernel32.NewProc("WriteProcessMemory")
-	procCloseHandle = kernel32.NewProc("CloseHandle")
+	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
+	procOpenProcess              = kernel32.NewProc("OpenProcess")
+	procReadProcessMemory        = kernel32.NewProc("ReadProcessMemory")
+	procWriteProcessMemory       = kernel32.NewProc("WriteProcessMemory")
+	procCloseHandle              = kernel32.NewProc("CloseHandle")
 	procCreateToolhelp32Snapshot = kernel32.NewProc("CreateToolhelp32Snapshot")
-	procProcess32First = kernel32.NewProc("Process32FirstW")
-	procProcess32Next = kernel32.NewProc("Process32NextW")
-	procVirtualQueryEx = kernel32.NewProc("VirtualQueryEx")
+	procProcess32First           = kernel32.NewProc("Process32FirstW")
+	procProcess32Next            = kernel32.NewProc("Process32NextW")
+	procVirtualQueryEx           = kernel32.NewProc("VirtualQueryEx")
 )
 
 const (
@@ -162,9 +162,10 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 	var addresses []uintptr
 	var mbi MEMORY_BASIC_INFORMATION
 	var address uintptr = 0
-	const maxResults = 100 // 降低最大结果数，提高性能
+	const maxResults = 1000 // 增加最大结果数，提高找到目标的概率
 	var scannedRegions int = 0
 	var readableRegions int = 0
+	var totalBytesScanned uint64 = 0
 
 	fmt.Printf("开始扫描进程 %d，搜索值: %d...\n", gm.processID, targetValue)
 	startTime := time.Now()
@@ -188,39 +189,54 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 
 		// 检查内存区域是否可读且已提交
 		// State: 0x1000 = MEM_COMMIT, 0x10000 = MEM_FREE, 0x200000 = MEM_RESERVE
-		if mbi.State == 0x1000 && mbi.RegionSize > 0 && mbi.RegionSize < 10*1024*1024 {
-			// 只扫描小于10MB的区域，避免过大内存区域
-			
+		if mbi.State == 0x1000 && mbi.RegionSize > 0 {
+			// 移除大小限制，扫描所有已提交的内存区域
+
 			// 检查保护属性是否可读
 			// PAGE_READONLY=0x02, PAGE_READWRITE=0x04, PAGE_WRITECOPY=0x08
-			// PAGE_EXECUTE_READ=0x20, PAGE_EXECUTE_READWRITE=0x40
-			isReadable := (mbi.Protect&0x02 != 0) || (mbi.Protect&0x04 != 0) || 
-				(mbi.Protect&0x08 != 0) || (mbi.Protect&0x20 != 0) || (mbi.Protect&0x40 != 0)
-			
+			// PAGE_EXECUTE_READ=0x20, PAGE_EXECUTE_READWRITE=0x40, PAGE_EXECUTE_WRITECOPY=0x80
+			isReadable := (mbi.Protect&0x02 != 0) || (mbi.Protect&0x04 != 0) ||
+				(mbi.Protect&0x08 != 0) || (mbi.Protect&0x20 != 0) || (mbi.Protect&0x40 != 0) ||
+				(mbi.Protect&0x80 != 0)
+
 			if isReadable {
 				readableRegions++
-				
-				// 分配缓冲区读取内存
-				buffer := make([]byte, mbi.RegionSize)
-				err := gm.ReadMemory(mbi.BaseAddress, buffer)
-				
-				if err == nil {
-					// 在缓冲区中搜索目标值
-					for i := 0; i <= len(buffer)-4; i += 4 {
-						// 将4个字节转换为int32（小端序）
-						value := int32(buffer[i]) |
-							int32(buffer[i+1])<<8 |
-							int32(buffer[i+2])<<16 |
-							int32(buffer[i+3])<<24
 
-						if value == targetValue {
-							addresses = append(addresses, mbi.BaseAddress+uintptr(i))
-							
-							// 如果结果太多，提前退出
-							if len(addresses) >= maxResults {
-								elapsed := time.Since(startTime)
-								fmt.Printf("已达到最大结果数限制 (%d)，耗时: %v\n", maxResults, elapsed)
-								return addresses, nil
+				// 分配缓冲区读取内存 - 分批处理大内存区域
+				regionSize := mbi.RegionSize
+				const chunkSize = 1024 * 1024 // 1MB chunks
+
+				for offset := uintptr(0); offset < regionSize; offset += chunkSize {
+					// 计算当前块的大小
+					currentChunkSize := chunkSize
+					if offset+uintptr(currentChunkSize) > regionSize {
+						currentChunkSize = int(regionSize - offset)
+					}
+
+					// 分配缓冲区读取内存
+					buffer := make([]byte, currentChunkSize)
+					err := gm.ReadMemory(mbi.BaseAddress+offset, buffer)
+
+					if err == nil {
+						totalBytesScanned += uint64(currentChunkSize)
+
+						// 在缓冲区中搜索目标值
+						for i := 0; i <= len(buffer)-4; i += 4 {
+							// 将4个字节转换为int32（小端序）
+							value := int32(buffer[i]) |
+								int32(buffer[i+1])<<8 |
+								int32(buffer[i+2])<<16 |
+								int32(buffer[i+3])<<24
+
+							if value == targetValue {
+								addresses = append(addresses, mbi.BaseAddress+offset+uintptr(i))
+
+								// 如果结果太多，提前退出
+								if len(addresses) >= maxResults {
+									elapsed := time.Since(startTime)
+									fmt.Printf("已达到最大结果数限制 (%d)，耗时: %v\n", maxResults, elapsed)
+									return addresses, nil
+								}
 							}
 						}
 					}
@@ -230,7 +246,7 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 
 		// 移动到下一个内存区域
 		nextAddress := mbi.BaseAddress + mbi.RegionSize
-		
+
 		// 防止无限循环（地址空间上限或回绕）
 		if nextAddress <= address {
 			break
@@ -242,9 +258,10 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 	fmt.Printf("扫描完成！\n")
 	fmt.Printf("  扫描区域数: %d\n", scannedRegions)
 	fmt.Printf("  可读区域数: %d\n", readableRegions)
+	fmt.Printf("  扫描总字节数: %.2f MB\n", float64(totalBytesScanned)/(1024*1024))
 	fmt.Printf("  找到匹配地址: %d\n", len(addresses))
 	fmt.Printf("  总耗时: %v\n", elapsed)
-	
+
 	return addresses, nil
 }
 
@@ -253,8 +270,8 @@ var modifier = NewGameModifier()
 
 // API响应结构
 type APIResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
@@ -268,7 +285,7 @@ func findProcessHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessName string `json:"process_name"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: "无效的请求"})
 		return
@@ -303,7 +320,7 @@ func searchValueHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Value int32 `json:"value"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: "无效的请求"})
 		return
@@ -333,7 +350,7 @@ func modifyValueHandler(w http.ResponseWriter, r *http.Request) {
 		Address  uint64 `json:"address"`
 		NewValue int32  `json:"new_value"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: "无效的请求"})
 		return
@@ -659,7 +676,7 @@ func main() {
 	fmt.Printf("🎮 游戏修改器已启动!\n")
 	fmt.Printf("🌐 请在浏览器中打开: http://localhost:%s\n", port)
 	fmt.Printf("⚠️  按 Ctrl+C 停止服务器\n\n")
-	
+
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		fmt.Printf("错误: %v\n", err)
 	}

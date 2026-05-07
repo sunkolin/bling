@@ -38,8 +38,8 @@ go run main.go
 
 或者编译后以管理员身份运行可执行文件：
 ```bash
-go build -o game-modifier.exe
-# 然后右键点击 game-modifier.exe，选择“以管理员身份运行”
+go build -o bling.exe
+# 然后右键点击 bling.exe，选择“以管理员身份运行”
 ```
 
 ## 使用说明
