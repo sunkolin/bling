@@ -763,7 +763,7 @@ func main() {
 	http.HandleFunc("/api/modify-value", modifyValueHandler)
 
 	// 启动服务器
-	port := "8081" // 更改端口避免冲突
+	port := "8080" // 更改端口避免冲突
 	fmt.Printf("🎮 游戏修改器已启动!\n")
 	fmt.Printf("🌐 请在浏览器中打开: http://localhost:%s\n", port)
 	fmt.Printf("⚠️  按 Ctrl+C 停止服务器\n\n")
