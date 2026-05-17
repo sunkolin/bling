@@ -1,12 +1,18 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"os"
+	"strconv"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
+	"gopkg.in/yaml.v3"
 )
 
 // 定义Windows API函数
@@ -55,6 +61,45 @@ type PROCESSENTRY32 struct {
 type GameModifier struct {
 	processHandle syscall.Handle
 	processID     uint32
+}
+
+// GUIConfig GUI配置结构体
+type GUIConfig struct {
+	Title          string `yaml:"title"`
+	Width          int    `yaml:"width"`
+	Height         int    `yaml:"height"`
+	DefaultProcess string `yaml:"default_process"`
+}
+
+// AppConfig 应用配置结构体
+type AppConfig struct {
+	GUI GUIConfig `yaml:"gui"`
+}
+
+// loadConfig 加载配置文件
+func loadConfig() *AppConfig {
+	config := &AppConfig{
+		GUI: GUIConfig{
+			Title:          "💎 Bling - 游戏修改器",
+			Width:          800,
+			Height:         600,
+			DefaultProcess: "",
+		},
+	}
+
+	data, err := os.ReadFile("config.yaml")
+	if err != nil {
+		fmt.Println("警告: 无法读取配置文件，使用默认配置")
+		return config
+	}
+
+	err = yaml.Unmarshal(data, config)
+	if err != nil {
+		fmt.Println("警告: 配置文件格式错误，使用默认配置")
+		return config
+	}
+
+	return config
 }
 
 // NewGameModifier 创建新的游戏修改器实例
@@ -167,7 +212,6 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 	var readableRegions int = 0
 	var totalBytesScanned uint64 = 0
 
-	fmt.Printf("开始扫描进程 %d，搜索值: %d...\n", gm.processID, targetValue)
 	startTime := time.Now()
 
 	// 遍历进程的整个虚拟地址空间
@@ -254,521 +298,160 @@ func (gm *GameModifier) ScanForValue(targetValue int32) ([]uintptr, error) {
 		address = nextAddress
 	}
 
-	elapsed := time.Since(startTime)
-	fmt.Printf("扫描完成！\n")
-	fmt.Printf("  扫描区域数: %d\n", scannedRegions)
-	fmt.Printf("  可读区域数: %d\n", readableRegions)
-	fmt.Printf("  扫描总字节数: %.2f MB\n", float64(totalBytesScanned)/(1024*1024))
-	fmt.Printf("  找到匹配地址: %d\n", len(addresses))
-	fmt.Printf("  总耗时: %v\n", elapsed)
-
-	return addresses, nil
-}
-
-// refineSearch 在上次搜索结果中再次搜索指定值
-func refineSearch(targetValue int32) ([]uintptr, error) {
-	if len(lastSearchAddresses) == 0 {
-		return nil, fmt.Errorf("没有上次的搜索结果，请先进行首次搜索")
-	}
-
-	var addresses []uintptr
-	fmt.Printf("在上次 %d 个结果中再次搜索值: %d...\n", len(lastSearchAddresses), targetValue)
-	startTime := time.Now()
-
-	// 遍历上次搜索的所有地址，检查当前值是否匹配
-	for _, addr := range lastSearchAddresses {
-		buffer := make([]byte, 4)
-		err := modifier.ReadMemory(addr, buffer)
-
-		if err == nil {
-			// 将4个字节转换为int32（小端序）
-			value := int32(buffer[0]) |
-				int32(buffer[1])<<8 |
-				int32(buffer[2])<<16 |
-				int32(buffer[3])<<24
-
-			if value == targetValue {
-				addresses = append(addresses, addr)
-			}
-		}
-	}
-
-	elapsed := time.Since(startTime)
-	fmt.Printf("再次搜索完成！找到 %d 个匹配地址，耗时: %v\n", len(addresses), elapsed)
-
 	return addresses, nil
 }
 
 // 全局游戏修改器实例
 var modifier = NewGameModifier()
 
-// 存储上次搜索的地址列表，用于再次搜索
-var lastSearchAddresses []uintptr
-
-// API响应结构
-type APIResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// 查找进程API
-func findProcessHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		ProcessName string `json:"process_name"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: "无效的请求"})
-		return
-	}
-
-	processID, err := modifier.FindProcessByName(req.ProcessName)
-	if err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: err.Error()})
-		return
-	}
-
-	err = modifier.OpenProcess(processID)
-	if err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: err.Error()})
-		return
-	}
-
-	json.NewEncoder(w).Encode(APIResponse{
-		Success: true,
-		Message: fmt.Sprintf("成功打开进程 ID: %d", processID),
-		Data:    map[string]interface{}{"process_id": processID},
-	})
-}
-
-// 搜索值API
-func searchValueHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		Value        int32 `json:"value"`
-		RefineSearch bool  `json:"refine_search,omitempty"` // 是否在上次结果中再次搜索
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: "无效的请求"})
-		return
-	}
-
-	var addresses []uintptr
-	var err error
-
-	if req.RefineSearch && len(lastSearchAddresses) > 0 {
-		// 在上次搜索结果中再次搜索
-		addresses, err = refineSearch(req.Value)
-	} else {
-		// 全新搜索
-		addresses, err = modifier.ScanForValue(req.Value)
-		if err == nil {
-			// 保存搜索结果供下次使用
-			lastSearchAddresses = addresses
-		}
-	}
-
-	if err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: err.Error()})
-		return
-	}
-
-	// 更新上次搜索结果
-	lastSearchAddresses = addresses
-
-	json.NewEncoder(w).Encode(APIResponse{
-		Success: true,
-		Message: fmt.Sprintf("找到 %d 个匹配地址", len(addresses)),
-		Data:    map[string]interface{}{"addresses": addresses},
-	})
-}
-
-// 修改值API
-func modifyValueHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		Address  uint64 `json:"address"`
-		NewValue int32  `json:"new_value"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: "无效的请求"})
-		return
-	}
-
-	// 将值转换为字节数组
-	data := make([]byte, 4)
-	data[0] = byte(req.NewValue & 0xFF)
-	data[1] = byte((req.NewValue >> 8) & 0xFF)
-	data[2] = byte((req.NewValue >> 16) & 0xFF)
-	data[3] = byte((req.NewValue >> 24) & 0xFF)
-
-	err := modifier.WriteMemory(uintptr(req.Address), data)
-	if err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Success: false, Message: err.Error()})
-		return
-	}
-
-	json.NewEncoder(w).Encode(APIResponse{
-		Success: true,
-		Message: fmt.Sprintf("成功修改地址 0x%X 的值为 %d", req.Address, req.NewValue),
-	})
-}
-
-// Web界面
-const htmlPage = `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>游戏修改器</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: 'Microsoft YaHei', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
-            max-width: 600px;
-            width: 100%;
-        }
-        h1 {
-            text-align: center;
-            color: #333;
-            margin-bottom: 30px;
-            font-size: 28px;
-        }
-        .section {
-            margin-bottom: 25px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 10px;
-        }
-        .section h2 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 18px;
-        }
-        .input-group {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-        input[type="text"], input[type="number"] {
-            flex: 1;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-            transition: border-color 0.3s;
-        }
-        input[type="text"]:focus, input[type="number"]:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        button {
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        button:active {
-            transform: translateY(0);
-        }
-        .result {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
-            background: #e8f5e9;
-            border-left: 4px solid #4caf50;
-            display: none;
-        }
-        .result.error {
-            background: #ffebee;
-            border-left-color: #f44336;
-        }
-        .result.warning {
-            background: #fff3e0;
-            border-left-color: #ff9800;
-        }
-        .result.show {
-            display: block;
-        }
-        .address-list {
-            margin-top: 10px;
-            max-height: 200px;
-            overflow-y: auto;
-            background: #f5f5f5;
-            padding: 10px;
-            border-radius: 5px;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-        }
-        .address-item {
-            padding: 5px;
-            margin: 2px 0;
-            background: white;
-            border-radius: 3px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .address-item:hover {
-            background: #e3f2fd;
-        }
-        .info {
-            text-align: center;
-            color: #666;
-            margin-top: 20px;
-            font-size: 12px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎮 游戏修改器</h1>
-        
-        <div class="section">
-            <h2>1. 选择进程</h2>
-            <div class="input-group">
-                <input type="text" id="processName" placeholder="输入进程名称 (例如: notepad.exe)">
-                <button onclick="findProcess()">查找进程</button>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>2. 搜索数值</h2>
-            <div class="input-group">
-                <input type="number" id="searchValue" placeholder="输入要搜索的值">
-                <button onclick="searchValue()">首次搜索</button>
-                <button onclick="refineSearch()" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">再次搜索</button>
-            </div>
-            <p style="font-size: 12px; color: #666; margin-top: 8px;">
-                💡 提示：首次搜索会得到很多结果，改变游戏数值后点击“再次搜索”来缩小范围
-            </p>
-        </div>
-
-        <div class="section">
-            <h2>3. 修改数值</h2>
-            <div class="input-group">
-                <input type="text" id="address" placeholder="内存地址 (例如: 0x12345678)">
-                <input type="number" id="newValue" placeholder="新值">
-                <button onclick="modifyValue()">修改值</button>
-            </div>
-        </div>
-
-        <div id="result" class="result"></div>
-        <div id="addressList" class="address-list" style="display: none;"></div>
-        
-        <div class="info">
-            <p>⚠️ 本程序仅用于学习和研究目的</p>
-        </div>
-    </div>
-
-    <script>
-        function showResult(message, type = 'success') {
-            const resultDiv = document.getElementById('result');
-            resultDiv.textContent = message;
-            resultDiv.className = 'result show ' + type;
-        }
-
-        async function findProcess() {
-            const processName = document.getElementById('processName').value;
-            if (!processName) {
-                showResult('错误: 请输入进程名称', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/find-process', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({process_name: processName})
-                });
-                const data = await response.json();
-                
-                // 检查是否是权限错误
-                if (data.message && data.message.includes('管理员')) {
-                    showResult(data.message, 'warning');
-                } else {
-                    showResult(data.message, data.success ? 'success' : 'error');
-                }
-            } catch (error) {
-                showResult('错误: ' + error.message, 'error');
-            }
-        }
-
-        async function searchValue() {
-            const value = document.getElementById('searchValue').value;
-            if (!value) {
-                showResult('错误: 请输入要搜索的值', 'error');
-                return;
-            }
-
-            showResult('正在扫描内存，请稍候...', 'success');
-            document.getElementById('addressList').style.display = 'none';
-
-            try {
-                const response = await fetch('/api/search-value', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({value: parseInt(value), refine_search: false})
-                });
-                const data = await response.json();
-                showResult(data.message, data.success ? 'success' : 'error');
-                
-                // 显示地址列表
-                if (data.success && data.data && data.data.addresses && data.data.addresses.length > 0) {
-                    displayAddresses(data.data.addresses);
-                } else if (data.success && data.data.addresses.length === 0) {
-                    showResult('未找到匹配的地址，请尝试其他数值', 'warning');
-                }
-            } catch (error) {
-                showResult('错误: ' + error.message, 'error');
-            }
-        }
-
-        async function refineSearch() {
-            const value = document.getElementById('searchValue').value;
-            if (!value) {
-                showResult('错误: 请输入要搜索的值', 'error');
-                return;
-            }
-
-            showResult('正在上次结果中再次搜索...', 'success');
-            document.getElementById('addressList').style.display = 'none';
-
-            try {
-                const response = await fetch('/api/search-value', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({value: parseInt(value), refine_search: true})
-                });
-                const data = await response.json();
-                showResult(data.message, data.success ? 'success' : 'error');
-                
-                // 显示地址列表
-                if (data.success && data.data && data.data.addresses && data.data.addresses.length > 0) {
-                    displayAddresses(data.data.addresses);
-                } else if (data.success && data.data.addresses.length === 0) {
-                    showResult('未找到匹配的地址，可能目标地址已变化', 'warning');
-                }
-            } catch (error) {
-                showResult('错误: ' + error.message, 'error');
-            }
-        }
-
-        function displayAddresses(addresses) {
-            const addressListDiv = document.getElementById('addressList');
-            addressListDiv.innerHTML = '<strong>找到的地址（点击复制到修改框）：</strong><br>';
-            
-            addresses.forEach(addr => {
-                const div = document.createElement('div');
-                div.className = 'address-item';
-                div.textContent = '0x' + addr.toString(16).toUpperCase();
-                div.onclick = () => {
-                    document.getElementById('address').value = '0x' + addr.toString(16).toUpperCase();
-                };
-                addressListDiv.appendChild(div);
-            });
-            
-            addressListDiv.style.display = 'block';
-        }
-
-        async function modifyValue() {
-            const address = document.getElementById('address').value;
-            const newValue = document.getElementById('newValue').value;
-
-            if (!address || !newValue) {
-                showResult('错误: 请输入内存地址和新值', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/modify-value', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        address: parseInt(address.startsWith('0x') ? address : '0x' + address, 16),
-                        new_value: parseInt(newValue)
-                    })
-                });
-                const data = await response.json();
-                
-                // 检查是否是权限错误
-                if (data.message && data.message.includes('管理员')) {
-                    showResult(data.message, 'warning');
-                } else {
-                    showResult(data.message, data.success ? 'success' : 'error');
-                }
-            } catch (error) {
-                showResult('错误: ' + error.message, 'error');
-            }
-        }
-    </script>
-</body>
-</html>
-`
-
-// 主页处理器
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(htmlPage))
-}
-
 func main() {
 	defer modifier.Close()
 
-	// 设置路由
-	http.HandleFunc("/", homeHandler)
-	http.HandleFunc("/api/find-process", findProcessHandler)
-	http.HandleFunc("/api/search-value", searchValueHandler)
-	http.HandleFunc("/api/modify-value", modifyValueHandler)
+	// 加载配置
+	config := loadConfig()
 
-	// 启动服务器
-	port := "8080" // 更改端口避免冲突
-	fmt.Printf("🎮 游戏修改器已启动!\n")
-	fmt.Printf("🌐 请在浏览器中打开: http://localhost:%s\n", port)
-	fmt.Printf("⚠️  按 Ctrl+C 停止服务器\n\n")
+	// 自动查找并打开默认进程
+	if config.GUI.DefaultProcess != "" {
+		resultLabel := widget.NewLabel("⏳ 正在自动连接进程: " + config.GUI.DefaultProcess)
+		resultLabel.Wrapping = fyne.TextWrapWord
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		fmt.Printf("错误: %v\n", err)
+		// 创建临时窗口显示连接状态
+		myApp := app.New()
+		myWindow := myApp.NewWindow(config.GUI.Title)
+		myWindow.Resize(fyne.NewSize(float32(config.GUI.Width), float32(config.GUI.Height)))
+		myWindow.SetContent(container.NewVBox(resultLabel))
+		myWindow.Show()
+
+		// 查找并打开进程
+		processID, err := modifier.FindProcessByName(config.GUI.DefaultProcess)
+		if err != nil {
+			resultLabel.SetText("❌ 错误: 未找到进程 " + config.GUI.DefaultProcess + "\n请确保游戏已启动")
+			myWindow.ShowAndRun()
+			return
+		}
+
+		err = modifier.OpenProcess(processID)
+		if err != nil {
+			resultLabel.SetText("❌ 错误: " + err.Error())
+			myWindow.ShowAndRun()
+			return
+		}
+
+		resultLabel.SetText(fmt.Sprintf("✅ 成功连接到进程 ID: %d", processID))
+
+		// 延迟关闭临时窗口，显示成功信息
+		time.AfterFunc(1*time.Second, func() {
+			myWindow.Close()
+		})
+
+		// 等待窗口关闭
+		time.Sleep(1500 * time.Millisecond)
 	}
+
+	// 创建Fyne应用
+	myApp := app.New()
+	myWindow := myApp.NewWindow(config.GUI.Title)
+	myWindow.Resize(fyne.NewSize(float32(config.GUI.Width), float32(config.GUI.Height)))
+
+	// 创建原值输入框
+	oldValueEntry := widget.NewEntry()
+	oldValueEntry.SetPlaceHolder("输入原值（要搜索的值）")
+
+	// 创建新值输入框
+	newValueEntry := widget.NewEntry()
+	newValueEntry.SetPlaceHolder("输入新值（要修改成的值）")
+
+	// 创建结果显示
+	resultLabel := widget.NewLabel("")
+	resultLabel.Wrapping = fyne.TextWrapWord
+
+	// 搜索并修改功能
+	searchAndModify := func() {
+		oldValueText := oldValueEntry.Text
+		newValueText := newValueEntry.Text
+
+		if oldValueText == "" || newValueText == "" {
+			resultLabel.SetText("❌ 错误: 请输入原值和新值")
+			return
+		}
+
+		oldValue, err := strconv.ParseInt(oldValueText, 10, 32)
+		if err != nil {
+			resultLabel.SetText("❌ 错误: 原值格式不正确")
+			return
+		}
+
+		newValue, err := strconv.ParseInt(newValueText, 10, 32)
+		if err != nil {
+			resultLabel.SetText("❌ 错误: 新值格式不正确")
+			return
+		}
+
+		resultLabel.SetText("⏳ 正在搜索并修改，请稍候...")
+
+		// 搜索所有匹配的地址
+		addresses, err := modifier.ScanForValue(int32(oldValue))
+		if err != nil {
+			resultLabel.SetText("❌ 错误: " + err.Error())
+			return
+		}
+
+		if len(addresses) == 0 {
+			resultLabel.SetText("⚠️ 未找到值为 " + oldValueText + " 的地址")
+			return
+		}
+
+		// 将所有找到的地址修改为新值
+		data := make([]byte, 4)
+		data[0] = byte(newValue & 0xFF)
+		data[1] = byte((newValue >> 8) & 0xFF)
+		data[2] = byte((newValue >> 16) & 0xFF)
+		data[3] = byte((newValue >> 24) & 0xFF)
+
+		modifiedCount := 0
+		for _, addr := range addresses {
+			err := modifier.WriteMemory(addr, data)
+			if err == nil {
+				modifiedCount++
+			}
+		}
+
+		resultLabel.SetText(fmt.Sprintf("✅ 成功修改 %d 个地址，值从 %s 改为 %s", modifiedCount, oldValueText, newValueText))
+	}
+
+	// 创建搜索并修改按钮
+	searchModifyBtn := widget.NewButton("🔍 搜索并修改", searchAndModify)
+	searchModifyBtn.Importance = widget.HighImportance
+
+	// 创建提示信息
+	tipLabel := widget.NewLabel("💡 提示：输入游戏中的当前值和目标值，点击按钮后将自动搜索并修改所有匹配的地址")
+	tipLabel.Wrapping = fyne.TextWrapWord
+
+	// 创建主布局
+	mainContent := container.NewVBox(
+		widget.NewLabel("原值:"),
+		oldValueEntry,
+		widget.NewLabel("新值:"),
+		newValueEntry,
+		widget.NewSeparator(),
+		searchModifyBtn,
+		widget.NewSeparator(),
+		resultLabel,
+		tipLabel,
+	)
+
+	// 添加滚动容器
+	scroll := container.NewScroll(mainContent)
+
+	// 设置窗口内容
+	myWindow.SetContent(scroll)
+
+	// 设置窗口关闭事件，确保清理资源
+	myWindow.SetOnClosed(func() {
+		modifier.Close()
+		os.Exit(0)
+	})
+
+	// 显示窗口并运行
+	myWindow.ShowAndRun()
 }

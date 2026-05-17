@@ -2,3 +2,9 @@ app:
   name: bling
   description: "游戏修改器 - 可以查询和修改游戏中的数值"
   version: "1.0.0"
+
+gui:
+  title: "星露谷物语游戏修改器"
+  width: 1000
+  height: 700
+  default_process: "Stardew Valley.exe"
