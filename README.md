@@ -39,15 +39,28 @@ go mod tidy
 
 ### 编译程序
 
+**方式一：使用构建脚本（推荐）**
 ```bash
-go build -o game-modifier.exe
+.\build.bat
+```
+
+**方式二：手动编译**
+```bash
+# 首次编译需要先捆绑图标资源
+fyne bundle -package main -name appIcon icon.png | Out-File -FilePath bundled.go -Encoding utf8
+
+# 编译程序（无控制台窗口）
+go build -ldflags="-H windowsgui" -o bling.exe .
+
+# 或者带控制台窗口（用于调试）
+go build -o bling.exe .
 ```
 
 ### 运行程序
 
 **重要：必须以管理员身份运行！**
 
-1. 右键点击 `game-modifier.exe`
+1. 右键点击 `bling.exe`
 2. 选择"以管理员身份运行"
 3. 开始使用GUI界面
 
@@ -148,3 +161,52 @@ go build -o game-modifier.exe
 ## 更多帮助
 
 详细的安装和故障排除指南，请查看 [INSTALL.md](INSTALL.md)
+
+## 开发经验总结
+
+### 图标集成方案
+
+本项目使用 Fyne 的资源捆绑功能来嵌入应用图标，无需额外工具：
+
+```bash
+# 1. 生成资源文件（首次编译或更换图标时执行）
+fyne bundle -package main -name appIcon icon.png | Out-File -FilePath bundled.go -Encoding utf8
+
+# 2. 在代码中使用嵌入的图标
+myWindow.SetIcon(appIcon)  # 设置窗口图标
+```
+
+**注意事项：**
+- `bundled.go` 是自动生成的文件，不要手动编辑
+- 如果更换了 `icon.png`，需要重新运行 `fyne bundle` 命令
+- 图标会被直接编译到 exe 文件中，无需分发额外的图片文件
+
+### 编译命令说明
+
+```bash
+# 无控制台窗口（发布版本）
+go build -ldflags="-H windowsgui" -o bling.exe .
+
+# 带控制台窗口（调试版本）
+go build -o bling.exe .
+```
+
+**参数解释：**
+- `-ldflags="-H windowsgui"`：隐藏控制台窗口，适用于纯 GUI 应用
+- `-o bling.exe`：指定输出文件名
+- `.`：编译当前目录下的所有 Go 文件（包括 bundled.go）
+
+### 常见问题
+
+**Q: 编译时提示找不到 bundled.go？**  
+A: 确保先运行 `fyne bundle` 命令生成资源文件。
+
+**Q: 图标没有显示？**  
+A: 检查以下几点：
+1. 确认已运行 `fyne bundle` 生成最新的 bundled.go
+2. 确认代码中使用了 `myWindow.SetIcon(appIcon)`
+3. 重新编译程序
+4. Windows 可能会缓存图标，尝试重启程序或清除图标缓存
+
+**Q: bundled.go 出现编码错误？**  
+A: 使用 PowerShell 的 `Out-File -Encoding utf8` 确保正确的文件编码。

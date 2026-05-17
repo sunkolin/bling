@@ -326,6 +326,9 @@ func main() {
 	// 设置窗口居中显示
 	myWindow.CenterOnScreen()
 
+	// 加载窗口图标 + 任务栏图标（使用嵌入的资源）
+	myWindow.SetIcon(appIcon) // 设置窗口图标
+
 	// 创建原值输入框
 	oldValueEntry := widget.NewEntry()
 	oldValueEntry.SetPlaceHolder("输入原值（要搜索的值）")
