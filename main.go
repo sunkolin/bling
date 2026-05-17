@@ -323,13 +323,18 @@ func main() {
 	myWindow := myApp.NewWindow(config.GUI.Title)
 	myWindow.Resize(fyne.NewSize(float32(config.GUI.Width), float32(config.GUI.Height)))
 
+	// 设置窗口居中显示
+	myWindow.CenterOnScreen()
+
 	// 创建原值输入框
 	oldValueEntry := widget.NewEntry()
 	oldValueEntry.SetPlaceHolder("输入原值（要搜索的值）")
+	oldValueEntry.Resize(fyne.NewSize(600, 35))
 
 	// 创建新值输入框
 	newValueEntry := widget.NewEntry()
 	newValueEntry.SetPlaceHolder("输入新值（要修改成的值）")
+	newValueEntry.Resize(fyne.NewSize(600, 35))
 
 	// 创建结果显示
 	resultLabel := widget.NewLabel("")
@@ -390,7 +395,7 @@ func main() {
 	}
 
 	// 创建搜索并修改按钮
-	searchModifyBtn := widget.NewButton("🔍 搜索并修改", searchAndModify)
+	searchModifyBtn := widget.NewButton("搜索并修改", searchAndModify)
 	searchModifyBtn.Importance = widget.HighImportance
 
 	// 创建提示信息
