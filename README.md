@@ -58,11 +58,12 @@ go build -o bling.exe .
 
 ### 运行程序
 
-**重要：必须以管理员身份运行！**
+**重要：本程序需要管理员权限才能修改其他进程的内存！**
 
-1. 右键点击 `bling.exe`
-2. 选择"以管理员身份运行"
-3. 开始使用GUI界面
+**直接双击 `bling.exe` 即可**
+- 程序会自动弹出 UAC（用户账户控制）提示框
+- 点击“是”后，程序即以管理员权限运行
+- 无需手动右键选择“以管理员身份运行”
 
 ## 使用说明
 
@@ -163,6 +164,46 @@ go build -o bling.exe .
 详细的安装和故障排除指南，请查看 [INSTALL.md](INSTALL.md)
 
 ## 开发经验总结
+
+### 自动请求管理员权限方案
+
+为了让程序在启动时自动弹出 UAC 提示框请求管理员权限，我们使用了 Windows manifest 文件：
+
+**步骤 1：创建 manifest.xml 文件**
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
+```
+
+**步骤 2：编译时嵌入 manifest**
+```bash
+# 安装 rsrc 工具（首次需要）
+go install github.com/akavel/rsrc@latest
+
+# 生成资源文件
+rsrc -manifest manifest.xml -o rsrc.syso
+
+# 编译程序
+go build -ldflags="-H windowsgui" -o bling.exe .
+```
+
+**工作原理：**
+- `rsrc` 工具将 manifest 转换为 Windows 资源文件 (.syso)
+- Go 编译器会自动将所有 .syso 文件链接到可执行文件中
+- Windows 在启动程序时会读取 manifest，发现需要管理员权限后自动弹出 UAC 提示
+
+**效果：**
+- 用户双击 `bling.exe` 时，立即弹出 UAC 提示框
+- 无需手动右键选择“以管理员身份运行”
+- 用户体验更好，更专业
 
 ### 图标集成方案
 

@@ -15,7 +15,14 @@ echo Done cleaning
 echo.
 
 echo [2/3] Building program...
-go build -ldflags="-H windowsgui" -o bling.exe main.go
+echo Generating resource file with administrator manifest...
+rsrc -manifest manifest.xml -o rsrc.syso
+if %errorlevel% neq 0 (
+    echo Failed to generate resource file!
+    pause
+    exit /b 1
+)
+go build -ldflags="-H windowsgui" -o bling.exe .
 if %errorlevel% neq 0 (
     echo Build failed!
     pause
@@ -38,7 +45,7 @@ echo.
 echo ========================================
 echo   Build Success!
 echo   Executable: bling.exe
-echo   Please run as administrator
+echo   Note: Will auto-request administrator privileges on launch
 echo ========================================
 echo.
 pause
