@@ -429,10 +429,14 @@ func main() {
 
 	// 创建主布局
 	mainContent := container.NewVBox(
-		widget.NewLabel("原值:"),
-		oldValueEntry,
-		widget.NewLabel("新值:"),
-		newValueEntry,
+		container.NewHBox(
+			widget.NewLabel("原值:"),
+			oldValueEntry,
+		),
+		container.NewHBox(
+			widget.NewLabel("新值:"),
+			newValueEntry,
+		),
 		widget.NewSeparator(),
 		searchModifyBtn,
 		widget.NewSeparator(),
@@ -449,7 +453,6 @@ func main() {
 	// 设置窗口关闭事件，确保清理资源
 	myWindow.SetOnClosed(func() {
 		modifier.Close()
-		os.Exit(0)
 	})
 
 	// 显示窗口并运行
