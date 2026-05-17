@@ -5,6 +5,6 @@ app:
 
 gui:
   title: "星露谷物语游戏修改器"
-  width: 1000
-  height: 700
+  width: 300
+  height: 500
   default_process: "Stardew Valley.exe"
