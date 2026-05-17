@@ -329,12 +329,10 @@ func main() {
 	// 创建原值输入框
 	oldValueEntry := widget.NewEntry()
 	oldValueEntry.SetPlaceHolder("输入原值（要搜索的值）")
-	oldValueEntry.Resize(fyne.NewSize(600, 35))
 
 	// 创建新值输入框
 	newValueEntry := widget.NewEntry()
 	newValueEntry.SetPlaceHolder("输入新值（要修改成的值）")
-	newValueEntry.Resize(fyne.NewSize(600, 35))
 
 	// 创建结果显示
 	resultLabel := widget.NewLabel("")
@@ -404,14 +402,8 @@ func main() {
 
 	// 创建主布局
 	mainContent := container.NewVBox(
-		container.NewHBox(
-			widget.NewLabel("原值:"),
-			oldValueEntry,
-		),
-		container.NewHBox(
-			widget.NewLabel("新值:"),
-			newValueEntry,
-		),
+		container.NewBorder(nil, nil, widget.NewLabel("原值:"), nil, oldValueEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("新值:"), nil, newValueEntry),
 		widget.NewSeparator(),
 		searchModifyBtn,
 		widget.NewSeparator(),
