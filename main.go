@@ -312,40 +312,10 @@ func main() {
 
 	// 自动查找并打开默认进程
 	if config.GUI.DefaultProcess != "" {
-		resultLabel := widget.NewLabel("⏳ 正在自动连接进程: " + config.GUI.DefaultProcess)
-		resultLabel.Wrapping = fyne.TextWrapWord
-
-		// 创建临时窗口显示连接状态
-		myApp := app.New()
-		myWindow := myApp.NewWindow(config.GUI.Title)
-		myWindow.Resize(fyne.NewSize(float32(config.GUI.Width), float32(config.GUI.Height)))
-		myWindow.SetContent(container.NewVBox(resultLabel))
-		myWindow.Show()
-
-		// 查找并打开进程
 		processID, err := modifier.FindProcessByName(config.GUI.DefaultProcess)
-		if err != nil {
-			resultLabel.SetText("❌ 错误: 未找到进程 " + config.GUI.DefaultProcess + "\n请确保游戏已启动")
-			myWindow.ShowAndRun()
-			return
+		if err == nil {
+			modifier.OpenProcess(processID)
 		}
-
-		err = modifier.OpenProcess(processID)
-		if err != nil {
-			resultLabel.SetText("❌ 错误: " + err.Error())
-			myWindow.ShowAndRun()
-			return
-		}
-
-		resultLabel.SetText(fmt.Sprintf("✅ 成功连接到进程 ID: %d", processID))
-
-		// 延迟关闭临时窗口，显示成功信息
-		time.AfterFunc(1*time.Second, func() {
-			myWindow.Close()
-		})
-
-		// 等待窗口关闭
-		time.Sleep(1500 * time.Millisecond)
 	}
 
 	// 创建Fyne应用
@@ -450,9 +420,10 @@ func main() {
 	// 设置窗口内容
 	myWindow.SetContent(scroll)
 
-	// 设置窗口关闭事件，确保清理资源
+	// 设置窗口关闭事件，强制退出程序
 	myWindow.SetOnClosed(func() {
 		modifier.Close()
+		os.Exit(0)
 	})
 
 	// 显示窗口并运行
